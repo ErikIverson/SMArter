@@ -2,7 +2,11 @@ CREATE TABLE coinBalances (
   ID SERIAL PRIMARY KEY,
   coinTicker VARCHAR(5) UNIQUE,
   boughtIn BOOLEAN,
-  investments FLOAT,
-  money FLOAT,
-  amount FLOAT
+  usdc FLOAT,
+  coinAmount FLOAT,
+  totalInvested FLOAT,
+  totalFees FLOAT,
+  newInvestments FLOAT,
+  netGains FLOAT,
+  netMultiplier FLOAT
 );

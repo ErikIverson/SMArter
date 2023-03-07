@@ -1,0 +1,89 @@
+# Psuedo Code for Chat GPT to Implement
+# My daily lambda that has the following purposes:
+
+1. Open connection to Kraken apis & postgres DB
+2. Grab historical data to calculate the smaTargets for today
+3. Evaluate current positions for each coin 
+4. Take the appropriate course of action (transact, order, nothing)
+5. Update the tables if a transaction was made
+6. Send notification of completion
+
+
+# Section 1
+Import any python libraries needed to run this script
+Import my Kraken API secret credentials from a local file
+Import my PostgresQL secret credentials from a local file
+Open up a connection to my postgres DB using those vars
+Create a kraken API object with my credentials
+
+Make a kraken API call with my credentials to get the time from Kraken (this is to test api connection)
+Make a kraken API call to get the balance of USDC in my account and print it out.
+Make a database query to get the coinbalance table and print it out nicely. (this tests db connectivity)
+
+If any of the above 3 requests return errors or fail, then do not proceed. Print a helpful error message.
+
+# Section 2
+Create data structures to hold the current smaValues table information
+
+Loop through all the smaValues' coinTickers:
+{
+    Make a substitution to a temporary var if you know Kraken uses a differe coinTicker for this coin
+
+    Load the short and medium sma values for this coinTicker
+
+    Make a Kraken api request to fetch historical coin prices for this coin midnight UTC for the past 30 days.
+    Load the price data into a variable
+
+    Calculate the simple moving averages for this coin at the length of {short} and {medium} sma lengths based on this data and the values of short and medium in this coinTicker's row of smaValues table.
+
+    Insert this data into the smaTarget table for this coin with the date, short sma calculation, medium sma calculation, and today's actual price.
+
+    Make a Kraken API request to check my transaction history for any orders that were filled in the past day which are not reflected already in this coin's transaction table.
+    # Get Trades History API
+    
+    If there are any, update the coin's transaction table with this information. 
+    And also make the appropriate updates to the coinBalance table with the new coin_amount, boughtIn, usdc, and new_investments values after the transaction.
+
+# Section 3
+    If new_investments + usdc + coin_amount > 0:
+    {
+        Evaluate whether we are currently "boughtIn" with this coin based on the coinBalance table information
+        If we are not boughtIn:
+        {
+            Set buy_price to equal the max of the short & medium smaTargets for today
+            Set buy_cash = new_investments + usdc (from the coinBalances table)
+            If the current price we fetched for today is < buy_price:
+            {
+                Use the Kraken API to either set or update a limit order of this coin at this buy_price for the amount buy_cash from USDC.
+                Alert & retry if the Kraken api has returned an error. Log a helpful error message.
+            }
+            If the current price we fetched for today is > buy_price:
+            {
+                Use the Kraken API to execute a buy transaction of this coin using USDC at the current market price for the amount buy_cash
+                Update the coinBalances table's entry for this coin with boughtIn = True, set usdc & new_investments to 0. And insert into the coin_amount column the exact amount of this coin we were able to buy in the transaction (note this info will be returned to you by the Kraken API if successful)
+                Alert & retry a few times if the Kraken api had returned an error. Log a helpful err message.
+            }
+        }
+        else:
+        {
+            Set sell_price to equal the max of the short & medium smaTargets for today
+            Set sell_amount = coin_amount from the coinBalances table
+            If the current price fetched for today is > sell_price:
+            {
+                Use the Kraken API to either set or update a limit/stop sell of this coin at this sell_price for the amount coin_amount to USDC.
+                Alert & retry if the Kraken api has returned an error. Log a helpful error message.
+            }
+            If the current price fetched for today is < sell_price:
+            {
+                Use the Kraken API to execute a sell transaction of this coin to USDC at the current market price in the amount coin_amount
+                Update the coinBalances table entries for this coin with boughtIn = False, coin_amount = 0, usdc = the value of usdc we got in our market transaction.
+                Alert & retry if the Kraken api has returned an error. Log a helpful error message.
+            }
+        }        
+    }
+}
+            
+    Create a log or print message with a summary of any orders or transactions placed above.
+    Make this a nicely formatted blob that can be emailed or texted to me via api.
+
+
