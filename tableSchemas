@@ -1,0 +1,49 @@
+CREATE TABLE smaValues (
+  ID SERIAL PRIMARY KEY,
+  coinTicker VARCHAR(5),
+  short INTEGER,
+  medium INTEGER
+);
+
+---
+
+DO $$
+DECLARE
+  coin VARCHAR(5);
+BEGIN
+  FOR coin IN SELECT DISTINCT coinTicker FROM smaValues
+  LOOP
+    EXECUTE 'CREATE TABLE ' || coin || '_smaTargets (ID SERIAL PRIMARY KEY, date DATE, short FLOAT, medium FLOAT, open FLOAT)';
+  END LOOP;
+END $$;
+
+---
+
+DO $$
+DECLARE
+  coin VARCHAR(5);
+BEGIN
+  FOR coin IN SELECT DISTINCT coinTicker FROM smaValues LOOP
+    EXECUTE 'CREATE TABLE ' || coin || '_transactions (
+      id SERIAL PRIMARY KEY,
+      date DATE,
+      direction VARCHAR(4) CHECK (direction IN (''Buy'', ''Sell'')),
+      fee_type VARCHAR(5) CHECK (fee_type IN (''Maker'', ''Taker'')),
+      price FLOAT
+    );';
+  END LOOP;
+END $$;
+
+---
+
+CREATE TABLE coinBalances (
+  ID SERIAL PRIMARY KEY,
+  coinTicker VARCHAR(5) UNIQUE,
+  boughtIn BOOLEAN,
+  usdc FLOAT,
+  coinAmount FLOAT,
+  totalInvested FLOAT,
+  newInvestments FLOAT,
+  netGains FLOAT,
+  netMultiplier FLOAT
+);
