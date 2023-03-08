@@ -7,7 +7,7 @@ BEGIN
       id SERIAL PRIMARY KEY,
       date DATE,
       direction VARCHAR(4) CHECK (direction IN (''Buy'', ''Sell'')),
-      fee_type VARCHAR(5) CHECK (fee_type IN (''Maker'', ''Taker'')),
+      fee_type VARCHAR(5) CHECK (fee_type IN (''Market'', '(''Limit'')')),
       price FLOAT
     );';
   END LOOP;
