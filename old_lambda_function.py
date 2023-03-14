@@ -12,7 +12,8 @@ tickers = {
     'MATIC': [11, 25, -1],
     'AVAX': [5, 18, -1],
     'DOT': [8, 16, 47],
-    'ADA': [11, 13, -1]
+    'ADA': [11, 13, -1],
+    'LUNA': [11, 20, -1]
 }
 
 # Set the start date to January 1st, 2020
@@ -71,18 +72,6 @@ for ticker in tickers:
 
     book = c.get_product_ticker(product_id=ticker + '-USD')
     livePrice = float(book['price'])
-
-    with open('./activity_data/' + ticker + '.txt') as f:
-        lines = f.readlines()
-        invested = lines[0]
-
-    if invested == 'True':
-        if livePrice < max(shortSMA, midSMA, longSMA):
-            print('Sell', ticker + '!')
-
-    else:
-        if livePrice > max(shortSMA, midSMA, longSMA):
-            print('Buy', ticker + '!')
 
     print(ticker, 'live:', livePrice)
     print('short:', shortSMA)

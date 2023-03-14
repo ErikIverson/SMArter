@@ -21,6 +21,7 @@ tickers = [
     'DOGE',
     'AGIX',
     'FET',
+    'LUNA'
     ]
 
 # Load in the dates
@@ -48,10 +49,10 @@ for ticker in tickers:
     historical.sort_values(by='Date', ascending=True, inplace=True)
     historical = historical.drop_duplicates()
 
-    for i in range(5,51):
+    for i in range(5,30):
         historical[str(i) + ' SMA'] = historical.Open.rolling(i).mean()
-    #
-    # display(historical)
-    # historical.to_csv('./coin_data/' + ticker + '.csv', index=True, header=True)
+
+    display(historical)
+    historical.to_csv('./coin_data/' + ticker + '.csv', index=True, header=True)
 
 print('End of File')

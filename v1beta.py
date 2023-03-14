@@ -1,21 +1,21 @@
 # Section 1
 import krakenex
-import psycopg2
+from sqlalchemy import create_engine, text
 import time
 from datetime import datetime, timedelta
-
-# Import Kraken API and PostgreSQL credentials from local files
-from numpy.core.defchararray import lower
 
 from kraken_credentials import api_key, api_secret
 from postgres_credentials import db_name, db_user, db_password, db_host, db_port
 
+engine = create_engine(f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}")
+
 # Open connection to PostgreSQL database
-conn = psycopg2.connect(database=db_name, user=db_user, password=db_password, host=db_host, port=db_port)
-cur = conn.cursor()
+conn = engine.connect()
 
 # Create a Kraken API object with credentials
 api = krakenex.API(key=api_key, secret=api_secret)
+
+########################################################################################################################
 
 # Make a Kraken API call to get the time from Kraken
 kraken_time = api.query_public('Time')
@@ -26,13 +26,13 @@ response = api.query_private('Balance')
 usd_balance = response['result']['ZUSD']
 print('USD Balance:', usd_balance)
 
-cur.execute('SELECT SUM(newinvestments) FROM coinBalances')
-newInvestments = cur.fetchone()[0]
+result = conn.execute(text('SELECT SUM(newinvestments) FROM coinBalances'))
+newInvestments = result.fetchone()[0]
 print('newInvestments', newInvestments)
 
 # Make a database query to get the coinbalance table and print it out nicely
-cur.execute('SELECT * FROM coinBalances')
-coin_balances = cur.fetchall()
+result = conn.execute(text('SELECT * FROM coinBalances'))
+coin_balances = result.fetchall()
 print('coinBalances:')
 coinTickers = []
 for row in coin_balances:
@@ -45,10 +45,10 @@ if kraken_time is None or coin_balances is None:
     print("Error: Unable to retrieve data from either Kraken API or PostgreSQL database")
 else:
     smaValues = {}
-    cur.execute('SELECT * FROM smaValues')
-    smaValues_rows = cur.fetchall()
+    result = conn.execute(text('SELECT * FROM smaValues'))
+    smaValues_rows = result.fetchall()
     for row in smaValues_rows:
-        smaValues[row[1]] = {'short': row[2], 'medium': row[3]}
+        smaValues[row[1]] = {'short': row[2], 'medium': row[3], 'decimals': row[4]}
     print(smaValues)
 
     # Get the current time and the time 24 hours ago
@@ -67,17 +67,21 @@ else:
     else:
         # Extract the list of trades from the response
         trades = response['result']['trades']
-        cur.execute("SELECT transactionId FROM alltransactions")
-        transactions = [transaction[0] for transaction in cur.fetchall()]
-        print('alltransactions:', transactions)
+        result = conn.execute(text("SELECT transactionId FROM alltransactions"))
+        transactions = [transaction[0] for transaction in result.fetchall()]
+        print('No. of transactions in the last 24 hrs:', len(trades))
         # Process the trades as needed
         for my_trade in trades:
             print('Trade: ', trades[my_trade])
-            if trades[my_trade]['pair'].strip('USD') in coinTickers and trades[my_trade]['ordertxid'] not in transactions:
+            if trades[my_trade]['pair'][0] == 'X':
+                trades[my_trade]['pair'] = trades[my_trade]['pair'][1:]
+            if trades[my_trade]['pair'].rstrip('ZUSD') in coinTickers and trades[my_trade][
+                'ordertxid'] not in transactions:
                 # do something with the trade data
                 trade = trades[my_trade]
-                coinTicker = trade['pair'].strip('USD')
+                coinTicker = trade['pair'].rstrip('ZUSD')
                 date = datetime.fromtimestamp(trade['time']).strftime("%Y-%m-%d")
+                time_of_trans = datetime.fromtimestamp(trade['time']).strftime("%H:%M:%S")
                 direction = trade['type']
                 fee_type = trade['ordertype']
                 price = trade['price']
@@ -86,31 +90,38 @@ else:
                 cost = float(trade['cost'])
                 id = trade['ordertxid']
 
-                cur.execute(f"INSERT INTO {lower(coinTicker)}_transactions (date, direction, fee_type, price) VALUES (\'{date}\', \'{direction}\', \'{fee_type}\', {price})")
+                conn.execute(text(
+                    f"INSERT INTO {coinTicker.lower()}_transactions (date, direction, fee_type, price, time) VALUES (\'{date}\', \'{direction}\', \'{fee_type}\', {price}, \'{time_of_trans}\')"))
                 conn.commit()
 
-                cur.execute(f"INSERT INTO alltransactions (transactionid) VALUES (\'{id}\')")
+                conn.execute(text(f"INSERT INTO alltransactions (transactionid) VALUES (\'{id}\')"))
                 conn.commit()
 
                 if direction == 'buy':
-                    cur.execute(f"UPDATE coinBalances SET boughtin = true, usd = 0, coinamount = {volume}, totalfees = totalfees + {fee}, newinvestments = 0 WHERE coinTicker = \'{coinTicker}\'")
+                    conn.execute(text(
+                        f"UPDATE coinBalances SET boughtin = true, usd = 0, coinamount = {volume}, totalfees = totalfees + {fee}, newinvestments = 0 WHERE coinTicker = \'{coinTicker}\'"))
                     conn.commit()
+                    print("Trade processed.")
                 else:
-                    cur.execute(f"UPDATE coinBalances SET boughtin = false, usd = {cost - fee}, coinamount = {volume}, totalfees = totalfees + {fee}, newinvestments = 0 WHERE coinTicker = \'{coinTicker}\'")
+                    conn.execute(text(
+                        f"UPDATE coinBalances SET boughtin = false, usd = {cost - fee}, coinamount = {volume}, totalfees = totalfees + {fee}, newinvestments = 0 WHERE coinTicker = \'{coinTicker}\'"))
                     conn.commit()
-                    cur.execute(f"UPDATE coinBalances SET netGains = usd - totalInvested, netMultiplier = usd / totalInvested WHERE coinTicker = \'{coinTicker}\'")
+                    conn.execute(text(
+                        f"UPDATE coinBalances SET netGains = usd - totalInvested, netMultiplier = usd / totalInvested WHERE coinTicker = \'{coinTicker}\'"))
                     conn.commit()
+                    print("Trade processed.")
 
-
+    print("\n\n--------------------\n")
     for coinTicker in smaValues.keys():
 
         short = int(smaValues[coinTicker]['short'])
         medium = int(smaValues[coinTicker]['medium'])
+        decimals = int(smaValues[coinTicker]['decimals'])
 
         # Set API endpoint and parameters
         pair = coinTicker + 'USD'
         interval = 1440  # 1 day interval
-        since = int(time.time() - (30*24*60*60)) # 30 days ago (in seconds)
+        since = int(time.time() - (30 * 24 * 60 * 60))  # 30 days ago (in seconds)
 
         # Set request parameters
         payload = {
@@ -131,20 +142,21 @@ else:
         short_sma = sum(prices[-short:]) / short
         medium_sma = sum(prices[-medium:]) / medium
 
-        sma_date = datetime.now().strftime('%Y-%m-%d')
+        sma_date = datetime.utcnow().strftime('%Y-%m-%d')
         open_price = prices[-1]
 
         try:
-            cur.execute(f"INSERT INTO {lower(coinTicker)}_smaTargets (date, short, medium, open) VALUES (\'{sma_date}\', {short_sma}, {medium_sma}, {open_price})")
+            conn.execute(text(
+                f"INSERT INTO {coinTicker.lower()}_smaTargets (date, short, medium, open) VALUES (\'{sma_date}\', {round(short_sma, 7)}, {round(medium_sma, 7)}, {open_price})"))
             conn.commit()
             print("Inserted sma targets for", coinTicker)
         except:
             conn.rollback()
             print("Targets exist already for", coinTicker)
 
-        cur.execute(f"SELECT MAX(date) FROM {coinTicker}_transactions")
+        result = conn.execute(text(f"SELECT MAX(date) FROM {coinTicker}_transactions"))
         try:
-            latest_transaction = cur.fetchone()[0]
+            latest_transaction = result.fetchone()[0]
         except:
             latest_transaction = 'None'
         print("Latest Transaction", latest_transaction)
@@ -154,68 +166,37 @@ else:
             print(f"Beginning {coinTicker} evaluations:")
             # Evaluate if this coin is boughtIn
             stringOfCoinTicker = f"\'{coinTicker}\'"
-            cur.execute(f"SELECT * FROM coinBalances WHERE coinTicker = {stringOfCoinTicker}")
-            coin_balances = cur.fetchall()[0]
+            result = conn.execute(text(f"SELECT * FROM coinBalances WHERE coinTicker = {stringOfCoinTicker}"))
+            coin_balances = result.fetchall()[0]
             print(coinTicker, 'balance:', coin_balances)
             boughtIn = bool(coin_balances[2])
             order_price = max(short_sma, medium_sma)
             buy_cash = float(coin_balances[3]) + float(coin_balances[7])
-            coin_amount = float(coin_balances[4])
+            coin_amount = round(float(coin_balances[4]), decimals)
 
             # Call the 'Ticker' public API endpoint to get the live price of BTC/USD
-            response = api.query_public('Ticker', {'pair': pair})
+            response = api.query_public('Ticker', {'pair': pair, 'interval': 5})
+            live_price = float(list(response['result'].values())[0]['c'][0])
+            conn.execute(text(
+                f"UPDATE {coinTicker.lower()}_smaTargets SET latest_price = {live_price} WHERE date = \'{sma_date}\'"))
+            conn.commit()
 
-            # Extract the live price from the response
-            live_price = response['result'][pair]['c'][0]
-
+            # Calculate the margin away from SMA trigger price
+            conn.execute(text(
+                f"UPDATE {coinTicker.lower()}_smaTargets SET margin = {round(live_price / max(short_sma, medium_sma), 3)} WHERE date = \'{sma_date}\'"))
+            conn.commit()
             print(f"The live price of {coinTicker} is {live_price}")
+            print(f"The SMAs for today are short = {round(short_sma, 2)} & medium = {round(medium_sma, 2)}")
 
             if buy_cash + coin_amount > 0:
                 # If we are not boughtIn
                 if not boughtIn:
-                    # Place limit order
-                    if live_price > order_price:
-                        print(f"Placing limit buy order on {coinTicker}")
-                        retry_count = 0
-                        while retry_count < 10:
-                            try:
-                                response = api.query_private("AddOrder", {
-                                    "pair": pair,
-                                    "type": "buy",
-                                    "ordertype": "market",
-                                    "price": round(order_price, 4),
-                                    "volume": buy_cash / order_price,
-                                    "oflags": "post"
-                                })
-                                print("Order:", {
-                                    "pair": pair,
-                                    "type": "buy",
-                                    "ordertype": "limit",
-                                    "price": round(order_price, 4),
-                                    "volume": buy_cash / order_price,
-                                    "oflags": "post"
-                                })
-                                if response["error"]:
-                                    raise Exception(response["error"])
-                                else:
-                                    print("Limit order has been set or updated.")
-                                    print(response['result'])
-                                    break
-                            except Exception as e:
-                                print("Error setting or updating limit order: {}".format(e))
-                                print("Retrying in 10 seconds...")
-                                time.sleep(10)
-                                retry_count += 1
-                        else:
-                            print("Maximum retry count reached. Unable to set or update limit order.")
-
                     # Place Market Order
-                    else:
+                    if live_price >= order_price:
                         print(f"Placing market buy order on {coinTicker}")
                         # Calculate the maximum volume we can buy with our available cash
-                        ticker_response = api.query_public("Ticker", {"pair": pair})
-                        last_trade_price = float(ticker_response["result"][pair]["c"][0])
-                        max_volume = buy_cash / last_trade_price
+                        max_volume = round(buy_cash / order_price, decimals)
+                        print(f"Trying to buy {max_volume} {coinTicker}")
                         retry_count = 0
                         while retry_count < 10:
                             try:
@@ -223,8 +204,7 @@ else:
                                     "pair": pair,
                                     "type": "buy",
                                     "ordertype": "market",
-                                    "volume": max_volume,
-                                    "oflags": "post"
+                                    "volume": max_volume
                                 })
                                 if response["error"]:
                                     raise Exception(response["error"])
@@ -234,45 +214,17 @@ else:
                                     break
                             except Exception as e:
                                 print("Error making market transaction: {}".format(e))
-                                print("Retrying in 10 seconds...")
-                                time.sleep(10)
+                                print("Retrying in 4 seconds...")
+                                time.sleep(4)
                                 retry_count += 1
                         else:
                             print("Maximum retry count reached. Unable to make market transaction.")
-
+                    else:
+                        print("Not time to buy just yet.")
                 # If we are boughtIn
                 else:
-                    # Place a limit sell order
-                    if open_price > order_price:
-                        print(f"Placing limit sell order on {coinTicker}")
-                        # Set or update a limit order with 3 retries
-                        retry_count = 0
-                        while retry_count < 10:
-                            try:
-                                response = api.query_private("AddOrder", {
-                                    "pair": pair,
-                                    "type": "sell",
-                                    "ordertype": "limit",
-                                    "price": order_price,
-                                    "volume": coin_amount,
-                                    "oflags": "post"
-                                })
-                                if response["error"]:
-                                    raise Exception(response["error"])
-                                else:
-                                    print("Limit order has been set or updated.")
-                                    print(response['result'])
-                                    break
-                            except Exception as e:
-                                print("Error setting or updating limit order: {}".format(e))
-                                print("Retrying in 10 seconds...")
-                                time.sleep(10)
-                                retry_count += 1
-                        else:
-                            print("Maximum retry count reached. Unable to set or update limit order.")
-
-                    # Place a market sell order
-                    else:
+                    # Placing a market sell order
+                    if live_price <= order_price:
                         print(f"Placing market sell order on {coinTicker}")
                         retry_count = 0
                         while retry_count < 10:
@@ -281,8 +233,7 @@ else:
                                     "pair": pair,
                                     "type": "sell",
                                     "ordertype": "market",
-                                    "volume": coin_amount,
-                                    "oflags": "post"
+                                    "volume": coin_amount
                                 })
                                 if response["error"]:
                                     raise Exception(response["error"])
@@ -297,9 +248,10 @@ else:
                                 retry_count += 1
                         else:
                             print("Maximum retry count reached. Unable to make market transaction.")
-                    print()
+                    else:
+                        print("Not time to sell just yet.")
             else:
                 print("No money invested for this coin yet.")
         else:
             print("Transaction already occurred today.")
-        print("Finished")
+        print("Finished\n\n--------------------\n")
